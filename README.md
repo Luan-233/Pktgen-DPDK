@@ -1,3 +1,7 @@
+#### Pktgen-DPDK Python ver.
+
+欢迎使用Pktgen-DPDK Python ver！
+
 ##### 实例接口
 
 1. `Device`，用于指定一张虚拟网卡。
