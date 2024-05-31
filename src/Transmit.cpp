@@ -13,6 +13,7 @@ PyObject* Device_Receive(Device_Object* Self, PyObject *Args) {
     std::memset(PktArray->Pkts, 0, sizeof(struct rte_mbuf*) * PktArray->Length);
     
     Count = rte_eth_rx_burst(Self->Info.Port, QueueId, PktArray->Pkts, PktArray->Length);
+    PktArray->AvilLength = Count;
     return PyLong_FromUnsignedLong((unsigned long)Count);
 }
 
@@ -28,8 +29,10 @@ PyObject* Device_Send(Device_Object* Self, PyObject *Args) {
         return NULL;
     }
     
-    Length = ((PacketArray_Object*)PktArray)->Length;
-    Count = rte_eth_tx_burst(Self->Info.Port, QueueId, ((PacketArray_Object*)PktArray)->Pkts, Length);
+    Length = ((PacketArray_Object*)PktArray)->AvilLength;
+    if (Length > 0) {
+        Count = rte_eth_tx_burst(Self->Info.Port, QueueId, ((PacketArray_Object*)PktArray)->Pkts, Length);
+    }
     return PyLong_FromUnsignedLong((unsigned long)Count);
 }
 
@@ -48,7 +51,7 @@ PyObject* Device_SendWithDelay(Device_Object* Self, PyObject *Args) {
         return NULL;
     }
     
-    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->Length; ++Index) {
+    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->AvilLength; ++Index) {
         DelayObj = PyList_GetItem(DelayArray, (Py_ssize_t)Index);
         if (PyLong_Check(DelayObj))
             Delay = PyLong_AsLong(DelayObj);
@@ -90,7 +93,7 @@ PyObject* Device_SendWithRate(Device_Object* Self, PyObject *Args) {
         return NULL;
     }
     
-    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->Length; ++Index) {
+    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->AvilLength; ++Index) {
         NextSend += ((PacketArray_Object*)PktArray)->Pkts[Index]->pkt_len * 8 / Bps * Frequency;
         while (rte_get_tsc_cycles() < NextSend);
         while (!rte_eth_tx_burst(Self->Info.Port, QueueId, &((PacketArray_Object*)PktArray)->Pkts[Index], 1));
@@ -126,8 +129,8 @@ PyObject* Device_SendWithPossionDelay(Device_Object* Self, PyObject *Args) {
     std::mt19937 Generator((uint32_t)std::time(NULL));
     std::exponential_distribution<double> Distribution(Lambda);
     
-    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->Length; ++Index) {
-        Delay = Distribution(Generator);
+    for (uint32_t Index = 0; Index < ((PacketArray_Object*)PktArray)->AvilLength; ++Index) {
+        Delay = Distribution(Generator) * 1000.0;
         NextSend += (uint64_t)(Delay / 1000.0 * (double)Frequency);
         while (rte_get_tsc_cycles() < NextSend);
         while (!rte_eth_tx_burst(Self->Info.Port, QueueId, &((PacketArray_Object*)PktArray)->Pkts[Index], 1));
