@@ -8,8 +8,14 @@ std::atomic<int> __Builtin_ArrayCounter(0);
 extern "C" {
     static PyMemberDef PacketArray_Members[] = { {
             .name = "Length",
-            .type = T_INT,
+            .type = T_SHORT,
             .offset = offsetof(PacketArray_Object, Length),
+            .flags = READONLY,
+            .doc = "Length of packet array."
+        },{
+            .name = "AvilableLength",
+            .type = T_SHORT,
+            .offset = offsetof(PacketArray_Object, AvilLength),
             .flags = READONLY,
             .doc = "Length of packet array."
         },
@@ -62,15 +68,17 @@ PyObject* PacketArray_New(PyTypeObject *Type, PyObject *Args, PyObject *Kwds) {
 }
 
 int PacketArray_Init(PacketArray_Object* Self, PyObject *Args, PyObject *Kwds) {
-    static char* KwdList[] = {"Length", "MemPool", "L2", "L3", "L4", NULL};
+    static char* KwdList[] = {"Length", "MemPool", "L2", "L3", "L4", "DataLen", NULL};
     
     const char *L2 = NULL, *L3 = NULL, *L4 = NULL;
-    uint16_t PktLength = 8, IpVersion = 0;
+    uint16_t PktLength = 0, IpVersion = 0;
     PyObject* MemPool = NULL;
     bool L2IsEther = false;
     
-    if (!PyArg_ParseTupleAndKeywords(Args, Kwds, "I|Osss", KwdList, &Self->Length, &MemPool, &L2, &L3, &L4))
+    if (!PyArg_ParseTupleAndKeywords(Args, Kwds, "I|OsssH", KwdList, &Self->Length, &MemPool, &L2, &L3, &L4, &PktLength))
         return -1;
+    
+    PktLength = std::max(PktLength, (uint16_t)8);
     
     Self->Pkts = new struct rte_mbuf* [Self->Length];
     
@@ -89,9 +97,11 @@ int PacketArray_Init(PacketArray_Object* Self, PyObject *Args, PyObject *Kwds) {
                                                "Please check if mempool has enough descriptors.");
             return -1;
         }
+        Self->AvilLength = Self->Length;
     }
     else {
-        std::memset(Self->Pkts, 0, sizeof(struct mbuf*) * Self->Length);
+        Self->AvilLength = 0;
+        std::memset(Self->Pkts, 0, sizeof(struct rte_mbuf*) * Self->Length);
         return 0;
     }
     
@@ -117,65 +127,94 @@ int PacketArray_Init(PacketArray_Object* Self, PyObject *Args, PyObject *Kwds) {
         return -1;
     }
     
-    if (!std::strcmp(L3, "IPv4")) {
-        Data->packet_type |= RTE_PTYPE_L3_IPV4;
-        Data->ol_flags = RTE_MBUF_F_TX_IPV4;
-        Data->l3_len = sizeof(struct rte_ipv4_hdr);
-        IpVersion = 4;
-        if (L2IsEther)
-            InitEthHeader((struct rte_ether_hdr*)L2HeaderPtr, RTE_ETHER_TYPE_IPV4, false, 0);
-    } else if (!std::strcmp(L3, "IPv6")){
-        Data->packet_type |= RTE_PTYPE_L3_IPV6;
-        Data->ol_flags = RTE_MBUF_F_TX_IPV6;
-        Data->l3_len = sizeof(struct rte_ipv6_hdr);
-        IpVersion = 6;
-        if (L2IsEther)
-            InitEthHeader((struct rte_ether_hdr*)L2HeaderPtr, RTE_ETHER_TYPE_IPV6, false, 0);
-    } else {
-        PyErr_SetString(PyExc_ValueError, "Unknown L3 argument.");
-        return -1;
-    }
-    
-    if (!std::strcmp(L4, "UDP")) {
-        Data->packet_type |= RTE_PTYPE_L4_UDP;
-        Data->l4_len = sizeof(struct rte_udp_hdr);
-        PktLength += Data->l4_len;
-        InitUDPHeader((struct rte_udp_hdr*)L4HeaderPtr, PktLength);
-        if (IpVersion == 4) {
-            PktLength += Data->l3_len;
-            InitIPv4Header((struct rte_ipv4_hdr*)L3HeaderPtr, PktLength, IPPROTO_UDP);
-        }
-        else if (IpVersion == 6) {
-            InitIPv6Header((struct rte_ipv6_hdr*)L3HeaderPtr, PktLength, IPPROTO_UDP);
-            PktLength += Data->l3_len;
-        }
-        else {
-            PyErr_SetString(PyExc_ValueError, "L3 protocol not specified.");
+    if (L3 != NULL) {
+        if (!std::strcmp(L3, "IPv4")) {
+            Data->packet_type |= RTE_PTYPE_L3_IPV4;
+            Data->ol_flags = RTE_MBUF_F_TX_IPV4;
+            Data->l3_len = sizeof(struct rte_ipv4_hdr);
+            IpVersion = 4;
+            if (L2IsEther)
+                InitEthHeader((struct rte_ether_hdr*)L2HeaderPtr, RTE_ETHER_TYPE_IPV4, false, 0);
+        } else if (!std::strcmp(L3, "IPv6")){
+            Data->packet_type |= RTE_PTYPE_L3_IPV6;
+            Data->ol_flags = RTE_MBUF_F_TX_IPV6;
+            Data->l3_len = sizeof(struct rte_ipv6_hdr);
+            IpVersion = 6;
+            if (L2IsEther)
+                InitEthHeader((struct rte_ether_hdr*)L2HeaderPtr, RTE_ETHER_TYPE_IPV6, false, 0);
+        } else {
+            PyErr_SetString(PyExc_ValueError, "Unknown L3 argument.");
             return -1;
         }
-    } else if (!std::strcmp(L4, "TCP")){
-        Data->packet_type |= RTE_PTYPE_L4_TCP;
-        Data->l4_len = sizeof(struct rte_tcp_hdr);
-        PktLength += Data->l4_len;
-        InitTCPHeader((struct rte_tcp_hdr*)L4HeaderPtr, PktLength);
-        if (IpVersion == 4) {
-            PktLength += Data->l3_len;
-            InitIPv4Header((struct rte_ipv4_hdr*)L3HeaderPtr, PktLength, IPPROTO_TCP);
-        }
-        else if (IpVersion == 6) {
-            InitIPv6Header((struct rte_ipv6_hdr*)L3HeaderPtr, PktLength, IPPROTO_TCP);
-            PktLength += Data->l3_len;
-        }
-        else {
-            PyErr_SetString(PyExc_ValueError, "L3 protocol not specified.");
+    } 
+    
+    if ((L3 != NULL) && (L4 != NULL)) {
+        if (!std::strcmp(L4, "UDP")) {
+            Data->packet_type |= RTE_PTYPE_L4_UDP;
+            Data->l4_len = sizeof(struct rte_udp_hdr);
+            PktLength += Data->l4_len;
+            InitUDPHeader((struct rte_udp_hdr*)L4HeaderPtr, PktLength);
+            if (IpVersion == 4) {
+                PktLength += Data->l3_len;
+                InitIPv4Header((struct rte_ipv4_hdr*)L3HeaderPtr, PktLength, IPPROTO_UDP);
+            }
+            else if (IpVersion == 6) {
+                InitIPv6Header((struct rte_ipv6_hdr*)L3HeaderPtr, PktLength, IPPROTO_UDP);
+                PktLength += Data->l3_len;
+            }
+            else {
+                PyErr_SetString(PyExc_ValueError, "L3 protocol not specified.");
+                return -1;
+            }
+        } else if (!std::strcmp(L4, "TCP")){
+            Data->packet_type |= RTE_PTYPE_L4_TCP;
+            Data->l4_len = sizeof(struct rte_tcp_hdr);
+            PktLength += Data->l4_len;
+            InitTCPHeader((struct rte_tcp_hdr*)L4HeaderPtr, PktLength);
+            if (IpVersion == 4) {
+                PktLength += Data->l3_len;
+                InitIPv4Header((struct rte_ipv4_hdr*)L3HeaderPtr, PktLength, IPPROTO_TCP);
+            }
+            else if (IpVersion == 6) {
+                InitIPv6Header((struct rte_ipv6_hdr*)L3HeaderPtr, PktLength, IPPROTO_TCP);
+                PktLength += Data->l3_len;
+            }
+            else {
+                PyErr_SetString(PyExc_ValueError, "L3 protocol not specified.");
+                return -1;
+            }
+        } else {
+            PyErr_SetString(PyExc_ValueError, "Unknown L4 argument.");
             return -1;
         }
-    } else {
-        PyErr_SetString(PyExc_ValueError, "Unknown L4 argument.");
-        return -1;
     }
     
-    PktLength += Data->l2_len; 
+    PktLength += Data->l2_len;
+    if (unlikely((int)(PktLength - Data->l2_len) < 46)) {
+        printf("Packet\'s Ethernet frame load length less than 46 bytes, padding automatically.\n");
+        PktLength += (uint16_t)(46 - (int)(PktLength - Data->l2_len));
+    }
+    if (unlikely(Data->l2_len + (uint16_t)1500 < PktLength)) {
+        printf("Packet\'s Ethernet frame load length more than 1500 bytes, cut off automatically.\n");
+        uint16_t Offset = PktLength - (Data->l2_len + (uint16_t)1500);
+        PktLength = Data->l2_len + (uint16_t)1500;
+         
+        if (!std::strcmp(L4, "UDP")) {
+            uint16_t Temp = rte_be_to_cpu_16(((struct rte_udp_hdr*)L4HeaderPtr)->dgram_len);
+            Temp -= Offset;
+            ((struct rte_udp_hdr*)L4HeaderPtr)->dgram_len = rte_cpu_to_be_16(Temp);
+        }
+        if (IpVersion == 4) {
+            uint16_t Temp = rte_be_to_cpu_16(((struct rte_ipv4_hdr*)L3HeaderPtr)->total_length);
+            Temp -= Offset;
+            ((struct rte_ipv4_hdr*)L3HeaderPtr)->total_length = rte_cpu_to_be_16(Temp);
+        }
+        else if (IpVersion == 6) {
+            uint16_t Temp = rte_be_to_cpu_16(((struct rte_ipv6_hdr*)L3HeaderPtr)->payload_len);
+            Temp -= Offset;
+            ((struct rte_ipv6_hdr*)L3HeaderPtr)->payload_len = rte_cpu_to_be_16(Temp);
+        }
+    }
     Data->data_len = Data->pkt_len = PktLength;
     
     void* DataSeg = (void*)rte_pktmbuf_mtod(Self->Pkts[0], void*);

@@ -20,12 +20,14 @@
 #include <rte_branch_prediction.h>
 
 #include <atomic> 
-#include <getopt.h> 
+#include <getopt.h>
+#include <iostream> 
 
 extern "C"{
     typedef struct {
         PyObject_HEAD
-        uint32_t Length;
+        uint16_t Length;
+        uint16_t AvilLength;
         struct rte_mbuf** Pkts;
     } PacketArray_Object;
     

@@ -37,14 +37,14 @@
 2. `Device.Send(QueueId, PktArray)`，直接发送一组数据包。
 3. `Device.SendWithDelay(QueueId, PktArray, DelayArray)`，在一定的延迟基础上发送一组数据包。延迟的单位是毫秒。
 4. `Device.SendWithRate(QueueId, PktArray, Rate)`，以恒定速率发送一组数据包。速率的单位是`Mbits/s`。
-5. `Device.SendWithPossionDelay(QueueId, PktArray, Lambda)`，以指数分布的延迟发送一组数据包，也即单位时间内的数据包数量满足泊松分布。单位同上。
+5. `Device.SendWithPossionDelay(QueueId, PktArray, Lambda)`，以指数分布的延迟发送一组数据包，也即单位时间内的数据包数量满足泊松分布。单位为期望的数据包每秒。
 
 ##### 测试用例
 
 以下是一段测试用例，功能是生成一组随机源IP、随机目的端口的数据包并计算校验和，以一定的延迟发送。
 
 ```python
-import Gen
+import Pktgen_DPDK as Gen
 import random
 
 port = Gen.Device(0, 1, 1)
